@@ -1,0 +1,250 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Fri May 20 11:22:33 2022
+
+@author: adolescent
+This function is used to generate condition reaction of cell.
+
+"""
+
+
+import My_Wheels.Stim_Dic_Tools as SDT
+import My_Wheels.Filters as Filter
+import numpy as np
+import more_itertools as mit
+from caiman.source_extraction.cnmf.cnmf import load_CNMF
+from caiman.source_extraction.cnmf.params import CNMFParams
+import OS_Tools_Kit as ot
+import List_Operation_Kit as lt
+from Standard_Parameters.Stim_Name_Tools import Stim_ID_Combiner
+import matplotlib.pyplot as plt
+#import  Stim_Dic_Tools as SDT
+#%%
+def Condition_Response_Core(F_train,c_run_SFA,head_extend=3,tail_extend = 3,filter_band = (0.005,0.3),fps = 1.301,base_frame = [1,2]):
+    '''
+    Core function of condition response generator. This function will generate single run,single cell.
+
+    Parameters
+    ----------
+    F_train : (np array)
+        F value train,single cells train. This will be processed into dF/F trains.
+    c_run_SFA : (dic)
+        Stim Frame Align dic of given run.
+    head_extend : (int), optional
+        Frames extend before stim ON. The default is 3.
+    tail_extend : (int), optional
+        Frames extend after stim OFF. The default is 3.
+    filter_band : (turple), optional
+        Filter parameter befor process in Hz. The default is (0.005,0.3).
+
+    Returns
+    -------
+    Response_Train : (dic)
+        Dictionary of current cell response.
+
+    '''
+    condition_frames = SDT.Condition_Response_Frames(c_run_SFA,head_extend,tail_extend)
+    # extend and filt F_train to avoid error. 
+    F_train = np.append(F_train,F_train[0:tail_extend])
+    F_train_filted = Filter.Signal_Filter(F_train,filter_para = (filter_band[0]*2/fps,filter_band[1]*2/fps))
+    #dF_train_filted -= dF_train_filted.mean()# Remove straight power.
+    # Generate train of all conditions.
+    F_Train = {}
+    dF_F_Train = {}
+    # get each condition have same length.
+    condition_length = 65535
+    all_conditions = list(condition_frames.keys())
+    for i in range(len(all_conditions)):# get proper length
+        current_cond_length = len(condition_frames[all_conditions[i]][0])
+        if current_cond_length < condition_length:
+            condition_length = current_cond_length
+    for i in range(len(all_conditions)):# cut too long condition.
+        current_condition = condition_frames[all_conditions[i]] # This is shallow copy so change below will be returned too.
+        for j in range(len(current_condition)):
+            current_condition[j] = current_condition[j][:condition_length]
+    
+    # Get condition response.
+    for i,c_condition in enumerate(all_conditions):
+        c_frame_lists = condition_frames[c_condition]
+        F_matrix = np.zeros(shape = (len(c_frame_lists[0]),len(c_frame_lists)),dtype = 'f8')
+        for j in range(len(c_frame_lists)):
+            cs_cond = c_frame_lists[j]
+            F_matrix[:,j] = F_train_filted[cs_cond]
+        # get dF matrix.
+        base_lines = F_matrix[base_frame,:].mean(0)
+        dF_F_matrix = (F_matrix-base_lines)/base_lines
+        # Add new line to generate Z score = =
+        
+        F_Train[c_condition] = F_matrix
+        dF_F_Train[c_condition] = dF_F_matrix
+    # Change F value train into dF/F train
+    
+        
+    return F_Train,dF_F_Train
+
+
+def All_Cell_Condition_Generator(day_folder,head_extend=3,tail_extend = 3,filter_band = (0.005,0.3),fps = 1.301,base_frame = [1,2],
+                                 sub_folder = '_CAIMAN',series_dic_name = 'All_Series_Dic.pkl'):
+    
+    # Initialize
+    work_path = ot.join(day_folder,sub_folder)
+    all_cell_dic = ot.Load_Variable(ot.join(work_path,series_dic_name))
+    all_sfa = ot.Load_Variable(day_folder,'_All_Stim_Frame_Infos.sfa')
+    Cell_Condition_Dic = {}
+    # Get useful lists.
+    cell_series_keys = list(all_cell_dic[1].keys())
+    cell_series_keys.remove('Cell_Loc')
+    cell_series_keys.remove('Cell_Mask')
+    sfa_keys = list(all_sfa.keys())
+    cell_series_keys = lt.Change_Runid_Style(cell_series_keys)
+    used_runs = list(set(sfa_keys)&set(cell_series_keys))
+    used_runs.sort()
+    # Cycle all cells
+    acn = list(all_cell_dic.keys())
+    for i,cc in enumerate(acn):
+        Cell_Condition_Dic[cc] = {}
+        for j,c_run in enumerate(used_runs):
+            if all_sfa[c_run] != None:
+                c_dF_train = all_cell_dic[cc][lt.Change_Runid_Style([c_run])[0]]
+                _,Cell_Condition_Dic[cc][c_run] = Condition_Response_Core(c_dF_train, all_sfa[c_run],head_extend,tail_extend,filter_band,fps,base_frame)
+
+    ot.Save_Variable(work_path, 'Cell_Condition_Response', Cell_Condition_Dic)
+    return Cell_Condition_Dic
+
+def Map_Condition_Combine_Lite(cell_response,Condition_Dics):
+    '''
+    Combine conditions to get specific response such as OD, HV or else.
+
+    Parameters
+    ----------
+    cell_response : (Dic)
+        Condition response dictionary of cell.
+    Condition_Dics : (Dic)
+        Maps' condition ID lists. Generated by Standard_Parameters.Stim_Name_Tools.Stim_ID_Combiner.
+
+    Returns
+    -------
+    combined_response : (Dic)
+        Combined map response.
+
+    '''
+    
+    #map_num = len(Condition_Dics)
+    all_map_name = list(Condition_Dics.keys())
+    combined_response = {}
+    for i,c_map in enumerate(all_map_name):
+        c_stim_list = Condition_Dics[c_map]
+        c_cond_array =  cell_response[c_stim_list[0]]
+        if len(c_stim_list)>1:# meaning we need to concatenate.
+            for j in range(len(c_stim_list)-1):
+                c_cond_array = np.concatenate((c_cond_array,cell_response[c_stim_list[j+1]]),axis = 1)
+        combined_response[c_map] = c_cond_array
+    
+    return combined_response
+
+
+def Cell_Response_Map(day_folder,Condition_Dics,sub_folder = '_CAIMAN',runname = 'Run007',
+                      stim_on = (3,6),
+                      error_bar = True,
+                      figsize = 'Default',
+                      subshape = 'Default'):
+    '''
+    Plot Cell response map.
+
+    Parameters
+    ----------
+    day_folder : (str)
+        Day folder of data.
+    Condition_Dics : (dic)
+        Dictionary of condition ID list, generated by Standard_Parameters.Stim_Name_Tools.Stim_ID_Combiner.
+    sub_folder : (str), optional
+        Subfolder of caimanned data. The default is '_CAIMAN'.
+    stim_on : (turple), optional
+        Range of stim on. The default is (3,6).
+    error_bar : bool, optional
+        Whether we plot error bar on graph. The default is True.
+    figsize : (turple), optional
+        Size of figure. Only need for too many condition. The default is 'Default'.
+    subshape : (turple), optional
+        Shape of subgraph layout.Row*Colume. The default is 'Default'.
+        
+    '''
+    work_path = ot.join(day_folder,sub_folder)
+    cell_response_dic = ot.Load_Variable(ot.join(work_path,'Cell_Condition_Response.pkl'))
+    plot_path = ot.join(work_path,runname+'_Response_Curve')
+    ot.mkdir(plot_path)
+    acn = list(cell_response_dic.keys())
+    example = cell_response_dic[acn[0]]
+    if runname not in example:
+        raise IOError('This run has no response curve!')
+    for i,cc in enumerate(acn):
+        cc_response = cell_response_dic[cc][runname]
+        plotable_data = Map_Condition_Combine_Lite(cc_response, Condition_Dics)
+        # Plot graphs.
+        response_plot_dic = {}
+        subgraph_num = len(plotable_data)
+        all_subgraph_name = list(plotable_data.keys())
+        y_max = 0# get y sticks
+        y_min = 65535
+        for j in range(subgraph_num):
+            current_graph_response = plotable_data[all_subgraph_name[j]]
+            average_plot = current_graph_response.mean(1)
+            se_2 = current_graph_response.std(1)/np.sqrt(current_graph_response.shape[1])*2
+            response_plot_dic[all_subgraph_name[j]] = (average_plot,se_2)
+            # renew y min and y max.
+            if average_plot.min() < y_min:
+                y_min = average_plot.min()
+            if average_plot.max() > y_max:
+                y_max = average_plot.max()
+        y_range = [y_min-0.3,y_max+0.3]
+        # Graph Plotting
+        # Graph Plotting
+        if subshape == 'Default':
+            col_num = int(np.ceil(np.sqrt(subgraph_num)))
+            row_num = int(np.ceil(subgraph_num/col_num))
+        else:
+            col_num = subshape[1]
+            row_num = subshape[0]
+        if figsize == 'Default':
+            fig,ax = plt.subplots(row_num,col_num,figsize = (15,15))# Initialize graphs:
+        else:
+            fig,ax = plt.subplots(row_num,col_num,figsize = figsize)
+        fig.suptitle(str(cc)+'_Response Maps', fontsize=30)
+        for j in range(subgraph_num):
+            current_col = j%col_num
+            current_row = j//col_num
+            current_graph_name = all_subgraph_name[j]
+            current_data = response_plot_dic[current_graph_name]
+            frame_num = len(current_data[0])
+            # Start plot
+            ax[current_row,current_col].hlines(y_range[0]+0.05, stim_on[0],stim_on[1],color="r")
+            ax[current_row,current_col].set_ylim(y_range)
+            ax[current_row,current_col].set_xticks(range(frame_num))
+            ax[current_row,current_col].set_title(current_graph_name)
+            # Whether we plot error bar on graph.
+            if error_bar == True:
+                ax[current_row,current_col].errorbar(range(frame_num),current_data[0],current_data[1],fmt = 'bo-',ecolor='g')
+            else:
+                ax[current_row,current_col].errorbar(range(frame_num),current_data[0],fmt = 'bo-')
+        # Save ploted graph.
+        ot.Save_Variable(plot_path, str(cc)+'_Response_Data', plotable_data)
+        fig.savefig(plot_path+r'\\'+str(cc)+'_Response.png',dpi = 180)
+        plt.clf()
+        plt.close()
+    return True
+    
+    
+
+
+
+#%%
+if __name__ == '__main__':
+    day_folder = r'D:\Test_Data\2P\220421_L85'
+    OD_Condition_Dics = Stim_ID_Combiner('OD_2P')
+    G16_Condition_Dics = Stim_ID_Combiner('G16_Oriens')
+    Hue_Condition_Dics = Stim_ID_Combiner('Hue7Orien4_Colors')
+    all_cell_condition = All_Cell_Condition_Generator(day_folder)
+    Cell_Response_Map(day_folder,OD_Condition_Dics,runname = 'Run007',subshape = (3,5))
+    Cell_Response_Map(day_folder,G16_Condition_Dics,runname = 'Run008',subshape = (3,4))
+    Cell_Response_Map(day_folder,Hue_Condition_Dics,runname = 'Run009')
+    
