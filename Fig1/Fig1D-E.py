@@ -1,5 +1,6 @@
 '''
-This mainly focus on Graph refinement.
+Different from ipynb version, this script will reproduce exactly the graph we used in figure
+Most differences are on visualization.
 
 '''
 
@@ -35,10 +36,28 @@ save_path = r'D:\_GoogleDrive_Files\#Figs\240627_Figs_FF1\Fig1'
 ac = ot.Load_Variable_v2(expt_folder,'Cell_Class.pkl')
 c_spon = ot.Load_Variable(expt_folder,'Spon_Before.pkl')
 
+#%% 
+'''
+Fig 1C, Location of Example Cells.
+'''
+cell_example_list = [47,322,338]
+avr_graph = ac.global_avr
+annotated_avr_graph = ac.Annotate_Cell(namelist=cell_example_list)
+
+plt.cla()
+plt.clf()
+fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(5,5),dpi = 300)
+ax.imshow(annotated_avr_graph)
+ax.set_yticks([])
+ax.set_xticks([])
+
+
+
 #%%
 '''
-Fig 1c, example cell response. Use dF/F of cells.
+Fig 1D & 1E, Spon and Stim Response on given time.
 '''
+### Part 1, get response of example time.
 
 # Step1, re generate data dF/F series
 cell_example_list = [47,322,338]
@@ -47,7 +66,6 @@ orien_series = pd.DataFrame(ac.Get_dFF_Frames(ac.orienrun,0.1))
 
 # Get Stim on ids
 import re
-
 # calculate all stim on locations.
 # spon_series = c_spon.reset_index(drop = True)
 # orien_series = ac.Z_Frames['1-007']
@@ -139,4 +157,3 @@ axes[2,0].set_yticks([0,1,1.5])
 axes[2,0].set_yticklabels([0,1,1.5],fontsize = fontsize)
 fig.tight_layout()
 # plt.show()
-fig.savefig(ot.join(save_path,'Fig1DE_Example_Cell.svg'))

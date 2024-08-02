@@ -1,8 +1,11 @@
+'''
+Plot dF/F distribution of each cell, in spon and stim.
 
+To run this stats, you might need a full copy of data, it can be quite big.
+'''
 
 
 #%%
-from Cell_Class.Stim_Calculators import Stim_Cells
 from Cell_Class.Format_Cell import Cell
 import OS_Tools_Kit as ot
 import numpy as np
@@ -27,14 +30,12 @@ warnings.filterwarnings("ignore")
 all_path_dic = list(ot.Get_Subfolders(r'D:\_All_Spon_Data_V1'))
 all_path_dic.pop(4)
 all_path_dic.pop(6)
-save_path = r'D:\_Path_For_Figs\240520_Figs_ver_F1\Fig1_Brief'
-# if already done, skip step 1 and run this.
-ac_strength = ot.Load_Variable(save_path,'1e_All_Cell_dFF.pkl')
+
 
 #%%
+
 '''
 Step1, we will get all dF/F ratio of all cells, and save them in folders.
-
 '''
 ac_strength = pd.DataFrame(columns = ['Loc','Cell','In_Run','dFF'])
 stim_spon_ratio = pd.DataFrame(columns = ['Loc','Cell','Ratio'])
@@ -58,17 +59,15 @@ for i,cloc in tqdm(enumerate(all_path_dic)):
         ac_strength.loc[len(ac_strength),:] = [cloc_name,j+1,'Spontaneous',spon_dff_avr[j]]
         ac_strength.loc[len(ac_strength),:] = [cloc_name,j+1,'Stimulus_ON',stimon_dff_avr[j]]
         stim_spon_ratio.loc[len(stim_spon_ratio)] = [cloc_name,j+1,all_ratios[j]]
-ot.Save_Variable(save_path,'1e_All_Cell_dFF',ac_strength)
-
 #%%
 '''
-Plot Parts, here we plot dF/F ratio graph here,
+Plot Parts, here we plot dF/F ratio graph,(Fig 1N,Fig 1O)
 We can also make a graph of tuning colored.
 
 '''
 plotable_data = ac_strength
 plt.clf()
-plt.cla()
+
 fontsize = 14
 
 fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(4,5),dpi = 300,sharex= False)
@@ -106,4 +105,3 @@ axes[0].set_ylabel('')
 axes[1].set_ylabel('')
 
 # fig.tight_layout()
-
